@@ -1,294 +1,297 @@
 ---
-name: fhir-developer-skill
+name: fhir-developer
 description: >
-  FHIR API development guide for building healthcare endpoints. Use when: (1) Creating
-  FHIR REST endpoints (Patient, Observation, Encounter, Condition, MedicationRequest),
-  (2) Validating FHIR resources and returning proper HTTP status codes and error responses,
-  (3) Implementing SMART on FHIR authorization and OAuth scopes, (4) Working with Bundles,
-  transactions, batch operations, or search pagination. Covers FHIR R4 resource structures,
-  required fields, value sets (status codes, gender, intent), coding systems (LOINC, SNOMED,
-  RxNorm, ICD-10), and OperationOutcome error handling.
+  Specialized knowledge of HL7 FHIR R4 for healthcare data exchange, with
+  deep context for HEDIS, CQL-based digital quality measures (dQMs), Medicare
+  Risk Adjustment (HCC/MRA), and clinical rules engine development. Use this
+  skill whenever the conversation involves: FHIR resources, resource structures,
+  cardinality rules, coding systems (LOINC, SNOMED CT, RxNorm, ICD-10, CPT,
+  HCPCS, NDC, CVX), RESTful FHIR API patterns, FHIR validation, CQL measure
+  population definitions, dQM data requirements, FHIR-based measure authoring,
+  HEDIS measure logic, HCC condition inference, rules engine FHIR compatibility,
+  CQL-to-FHIR retrieve mapping, or vendor evaluation of CQL/FHIR engines.
+  Always activate when the user asks about HEDIS, Stars, MRA, HCC, CQL, dQM,
+  digital quality measures, measure populations, FHIR data infrastructure, or
+  clinical rules engine architecture — even if they don't explicitly say "FHIR."
 ---
 
-# FHIR Developer Skill
+# FHIR Developer Skill — HEDIS/CQL/dQM Edition
 
-## Quick Reference
-
-### HTTP Status Codes
-| Code | When to Use |
-|------|-------------|
-| `200 OK` | Successful read, update, or search |
-| `201 Created` | Successful create (include `Location` header) |
-| `204 No Content` | Successful delete |
-| `400 Bad Request` | Malformed JSON, wrong resourceType |
-| `401 Unauthorized` | Missing, expired, revoked, or malformed token (RFC 6750) |
-| `403 Forbidden` | Valid token but insufficient scopes |
-| `404 Not Found` | Resource doesn't exist |
-| `412 Precondition Failed` | If-Match ETag mismatch (NOT 400!) |
-| `422 Unprocessable Entity` | Missing required fields, invalid enum values, business rule violations |
-
-### Required Fields by Resource (FHIR R4)
-| Resource | Required Fields | Everything Else |
-|----------|-----------------|-----------------|
-| Patient | *(none)* | All optional |
-| Observation | `status`, `code` | Optional |
-| Encounter | `status`, `class` | Optional (including `subject`, `period`) |
-| Condition | `subject` | Optional (including `code`, `clinicalStatus`) |
-| MedicationRequest | `status`, `intent`, `medication[x]`, `subject` | Optional |
-| Medication | *(none)* | All optional |
-| Bundle | `type` | Optional |
+This skill provides FHIR R4 knowledge scoped specifically for healthcare
+quality measurement, CQL-based digital quality measures, HEDIS analytics,
+and clinical rules engine evaluation. It extends the baseline FHIR developer
+knowledge with measure-specific resource usage, HEDIS-relevant coding systems,
+and CQL data requirement patterns.
 
 ---
 
-## Required vs Optional Fields (CRITICAL)
+## Core FHIR R4 Knowledge (Baseline)
 
-**Only validate fields with cardinality starting with "1" as required.**
+### Resource Structure Fundamentals
+- Every FHIR resource has: `resourceType`, `id`, `meta`, `text`, and domain elements
+- `meta.profile` identifies the FHIR profile a resource claims conformance to
+- Cardinality notation: `0..1` = optional single, `1..1` = required single, `0..*` = optional repeating, `1..*` = required repeating
+- References use `{ "reference": "ResourceType/id" }` format
+- Identifiers use `{ "system": "uri", "value": "string" }` — always pair system + value
+- CodeableConcept = `{ "coding": [{ "system", "code", "display" }], "text": "..." }`
 
-| Cardinality | Required? |
-|-------------|-----------|
-| `0..1`, `0..*` | NO |
-| `1..1`, `1..*` | YES |
+### RESTful API Patterns
+- Base URL format: `[base]/[ResourceType]/[id]`
+- Search: `GET [base]/Patient?identifier=...`
+- Create: `POST [base]/Patient` with resource body
+- Update: `PUT [base]/Patient/[id]`
+- Response codes: 200 OK, 201 Created, 400 Bad Request, 404 Not Found, 422 Unprocessable Entity
+- Bundles: `type = transaction | batch | searchset | collection | history`
+- Bulk FHIR export: `$export` operation on Patient or Group, returns NDJSON
 
-**Common mistake**: Making `subject` or `period` required on Encounter. They are 0..1 (optional).
-
----
-
-## Value Sets (Enum Values)
-
-Invalid enum values must return `422 Unprocessable Entity`.
-
-### Patient.gender
-`male | female | other | unknown`
-
-### Observation.status
-`registered | preliminary | final | amended | corrected | cancelled | entered-in-error | unknown`
-
-### Encounter.status
-`planned | arrived | triaged | in-progress | onleave | finished | cancelled | entered-in-error | unknown`
-
-### Encounter.class (Common Codes)
-| Code | Display | Use |
-|------|---------|-----|
-| `AMB` | ambulatory | Outpatient visits |
-| `IMP` | inpatient encounter | Hospital admissions |
-| `EMER` | emergency | Emergency department |
-| `VR` | virtual | Telehealth |
-
-### Condition.clinicalStatus
-`active | recurrence | relapse | inactive | remission | resolved`
-
-### Condition.verificationStatus
-`unconfirmed | provisional | differential | confirmed | refuted | entered-in-error`
-
-### MedicationRequest.status
-`active | on-hold | cancelled | completed | entered-in-error | stopped | draft | unknown`
-
-### MedicationRequest.intent
-`proposal | plan | order | original-order | reflex-order | filler-order | instance-order | option`
-
-### Bundle.type
-`document | message | transaction | transaction-response | batch | batch-response | history | searchset | collection`
+### Validation Patterns
+- OperationOutcome is the standard error resource — always return it on 4xx/5xx
+- Required fields missing → 422 with `OperationOutcome.issue.severity = error`
+- Profile validation: check `meta.profile` then validate against that IG
+- Terminology validation: verify codes exist in the declared ValueSet + CodeSystem
 
 ---
 
-## Validation Pattern
+## HEDIS-Relevant FHIR Resources
 
-**Python/FastAPI:**
-```python
-from fastapi import FastAPI
-from fastapi.responses import JSONResponse
+These are the resources most commonly referenced in HEDIS measure population
+criteria and CQL data requirements.
 
-app = FastAPI()
+### Patient
+- `birthDate` — used for age-based denominator criteria (e.g., age 18–85)
+- `gender` — used in gender-stratified measures
+- `address.state` / `address.postalCode` — geographic stratification
+- `deceased[x]` — exclusion criteria for deceased members
 
-def operation_outcome(severity: str, code: str, diagnostics: str):
-    return {
-        "resourceType": "OperationOutcome",
-        "issue": [{"severity": severity, "code": code, "diagnostics": diagnostics}]
-    }
+### Coverage
+- `Coverage.status` = `active` — confirms continuous enrollment
+- `Coverage.period` — used for continuous enrollment windows (e.g., 11 of 12 months)
+- `Coverage.payor` — payer identification for MA vs. commercial
+- `Coverage.class[group]` — plan/product line segmentation
+- Critical for HEDIS denominator eligibility — most measures require active coverage
 
-VALID_OBS_STATUS = {"registered", "preliminary", "final", "amended",
-                    "corrected", "cancelled", "entered-in-error", "unknown"}
+### Condition
+- `Condition.clinicalStatus` = `active | recurrence | relapse` vs. `inactive | remission | resolved`
+- `Condition.verificationStatus` = `confirmed` — HEDIS typically requires confirmed
+- `Condition.code` — ICD-10-CM codes via system `http://hl7.org/fhir/sid/icd-10-cm`
+- `Condition.onsetDateTime` / `Condition.recordedDate` — for lookback period logic
+- `Condition.category` = `problem-list-item` vs. `encounter-diagnosis`
 
-@app.post("/Observation", status_code=201)
-async def create_observation(data: dict):
-    if not data.get("status"):
-        return JSONResponse(status_code=422, content=operation_outcome(
-            "error", "required", "Observation.status is required"
-        ), media_type="application/fhir+json")
+### Encounter
+- `Encounter.status` = `finished` — completed visits only for most measures
+- `Encounter.class` — `AMB` (ambulatory), `IMP` (inpatient), `EMER` (emergency)
+- `Encounter.type` — CPT/HCPCS visit type codes
+- `Encounter.period` — start/end datetime for the measurement year window
+- `Encounter.participant` — for provider attribution
+- `Encounter.diagnosis` — links to Condition; `use` = `chief-complaint | comorbidity | billing`
+- `Encounter.hospitalization.dischargeDisposition` — used in readmission measures
 
-    if data["status"] not in VALID_OBS_STATUS:
-        return JSONResponse(status_code=422, content=operation_outcome(
-            "error", "value", f"Invalid status '{data['status']}'"
-        ), media_type="application/fhir+json")
-    # ... create resource
+### Observation
+- `Observation.status` = `final | amended | corrected` (exclude `entered-in-error`)
+- `Observation.code` — LOINC codes (system: `http://loinc.org`)
+- `Observation.value[x]` — `valueQuantity`, `valueCodeableConcept`, `valueString`
+- `Observation.effective[x]` — `effectiveDateTime` or `effectivePeriod`
+- `Observation.category` = `laboratory | vital-signs | survey | exam`
+- Used for: lab results (A1c, LDL, blood pressure), screenings, PHQ-9 scores
+
+### Procedure
+- `Procedure.status` = `completed`
+- `Procedure.code` — CPT (system: `http://www.ama-assn.org/go/cpt`) or HCPCS
+- `Procedure.performed[x]` — `performedDateTime` or `performedPeriod`
+- Primary numerator evidence for many HEDIS measures (screenings, interventions)
+
+### MedicationRequest
+- `MedicationRequest.status` = `active | completed`
+- `MedicationRequest.medication[x]` — `medicationCodeableConcept` using RxNorm
+  (system: `http://www.nlm.nih.gov/research/umls/rxnorm`) or NDC
+- `MedicationRequest.dispenseRequest.quantity` + `expectedSupplyDuration` — for PDC calculation
+- `MedicationRequest.authoredOn` — prescription date
+- Used in PDC (Proportion of Days Covered) measures: CMC, CHL, SAA, etc.
+
+### MedicationDispense
+- `MedicationDispense.status` = `completed`
+- `MedicationDispense.quantity` + `daysSupply` — **critical for PDC calculation**
+- `MedicationDispense.whenHandedOver` — dispense date for supply period calculation
+- `MedicationDispense.medication[x]` — same coding as MedicationRequest
+- Preferred over MedicationRequest for PDC because it reflects actual dispensing
+
+### DiagnosticReport
+- `DiagnosticReport.status` = `final | amended`
+- `DiagnosticReport.code` — LOINC panel code
+- `DiagnosticReport.result` — references to component Observations
+- Used for lab panel results (e.g., lipid panels, metabolic panels)
+
+### Immunization
+- `Immunization.status` = `completed`
+- `Immunization.vaccineCode` — CVX codes (system: `http://hl7.org/fhir/sid/cvx`)
+- `Immunization.occurrenceDateTime` — administration date
+- Used in: IMA, Flu, childhood immunization measures
+
+### ServiceRequest
+- `ServiceRequest.status` = `active | completed`
+- `ServiceRequest.intent` = `order`
+- `ServiceRequest.code` — CPT or LOINC order codes
+- Used to capture referrals and orders as numerator evidence in some measures
+
+---
+
+## HEDIS-Relevant Coding Systems
+
+| Coding System | FHIR System URI | Used For |
+|---|---|---|
+| ICD-10-CM | `http://hl7.org/fhir/sid/icd-10-cm` | Diagnoses (Condition, Encounter.diagnosis) |
+| ICD-10-PCS | `http://www.cms.gov/Medicare/Coding/ICD10` | Inpatient procedures |
+| CPT | `http://www.ama-assn.org/go/cpt` | Outpatient procedures, visits |
+| HCPCS | `http://www.cms.gov/Medicare/Coding/HCPCSReleaseCodeSets` | DME, drugs, services |
+| LOINC | `http://loinc.org` | Lab orders, results, panels |
+| SNOMED CT | `http://snomed.info/sct` | Clinical findings, procedures |
+| RxNorm | `http://www.nlm.nih.gov/research/umls/rxnorm` | Medications (clinical drug) |
+| NDC | `http://hl7.org/fhir/sid/ndc` | Medications (dispensed product) |
+| CVX | `http://hl7.org/fhir/sid/cvx` | Vaccines |
+| NPI | `http://hl7.org/fhir/sid/us-npi` | Provider identifiers |
+| Revenue Codes | `http://www.nubc.org/RevCode` | UB-04 facility billing |
+| DRG | `http://www.cms.gov/Medicare/MCM/Grouper-Software` | MS-DRG inpatient grouping |
+
+**Important:** HEDIS value sets use NCQA-maintained OIDs. When working with
+HEDIS CQL measures, value set references look like:
+`valueset "Diabetes": 'urn:oid:2.16.840.1.113883.3.464.1003.103.12.1001'`
+These must resolve against the VSAC (Value Set Authority Center) or an
+equivalent locally-cached terminology service.
+
+---
+
+## CQL-to-FHIR Data Requirement Mapping
+
+CQL measures declare data requirements as retrieve statements. Each retrieve
+maps to a specific FHIR resource query.
+
+### Retrieve Pattern
+```cql
+["Encounter": "Inpatient Encounter"]
+```
+Maps to FHIR query:
+```
+GET /Encounter?patient=[id]&type:in=[ValueSet URL]&status=finished
 ```
 
-**TypeScript/Express:**
-```typescript
-const VALID_OBS_STATUS = new Set(['registered', 'preliminary', 'final', 'amended',
-  'corrected', 'cancelled', 'entered-in-error', 'unknown']);
+### Common CQL Retrieve → FHIR Resource Map
 
-app.post('/Observation', (req, res) => {
-  if (!req.body.status) {
-    return res.status(422).contentType('application/fhir+json')
-      .json(operationOutcome('error', 'required', 'Observation.status is required'));
-  }
-  if (!VALID_OBS_STATUS.has(req.body.status)) {
-    return res.status(422).contentType('application/fhir+json')
-      .json(operationOutcome('error', 'value', `Invalid status '${req.body.status}'`));
-  }
-  // ... create resource
-});
-```
+| CQL Data Type | FHIR Resource | Key Filter |
+|---|---|---|
+| `["Encounter": ...]` | `Encounter` | `type`, `class`, `status`, `period` |
+| `["Condition": ...]` | `Condition` | `code`, `clinicalStatus`, `onsetDateTime` |
+| `["Observation": ...]` | `Observation` | `code`, `status`, `effectiveDateTime` |
+| `["Procedure": ...]` | `Procedure` | `code`, `status`, `performedDateTime` |
+| `["MedicationRequest": ...]` | `MedicationRequest` | `medication`, `status`, `authoredOn` |
+| `["MedicationDispense": ...]` | `MedicationDispense` | `medication`, `status`, `whenHandedOver` |
+| `["Immunization": ...]` | `Immunization` | `vaccineCode`, `status`, `occurrence` |
+| `["Coverage": ...]` | `Coverage` | `status`, `period`, `payor` |
+| `["Patient"]` | `Patient` | `birthDate`, `gender`, `deceased` |
 
-**Pydantic v2 Models** (use `Literal`, not `const=True`):
-```python
-from typing import Literal
-from pydantic import BaseModel
-
-class Patient(BaseModel):
-    resourceType: Literal["Patient"] = "Patient"
-    id: str | None = None
-    gender: Literal["male", "female", "other", "unknown"] | None = None
-```
+### Timing Alignment
+CQL uses `during` and `overlaps` for interval logic. FHIR queries use:
+- `date=ge[start]&date=le[end]` for date range filtering
+- Note: CQL interval logic is more expressive than FHIR search — some interval
+  operations must be post-filtered in application logic after the FHIR query
 
 ---
 
-## Coding Systems (URLs)
+## HEDIS Measure Population Framework (FHIR context)
 
-| System | URL |
-|--------|-----|
-| LOINC | `http://loinc.org` |
-| SNOMED CT | `http://snomed.info/sct` |
-| RxNorm | `http://www.nlm.nih.gov/research/umls/rxnorm` |
-| ICD-10 | `http://hl7.org/fhir/sid/icd-10` |
-| v3-ActCode | `http://terminology.hl7.org/CodeSystem/v3-ActCode` |
-| Observation Category | `http://terminology.hl7.org/CodeSystem/observation-category` |
-| Condition Clinical | `http://terminology.hl7.org/CodeSystem/condition-clinical` |
-| Condition Ver Status | `http://terminology.hl7.org/CodeSystem/condition-ver-status` |
+HEDIS measures map to FHIR Measure resource populations:
 
-### Common LOINC Codes (Vital Signs)
-| Code | Description |
-|------|-------------|
-| `8867-4` | Heart rate |
-| `8480-6` | Systolic blood pressure |
-| `8462-4` | Diastolic blood pressure |
-| `8310-5` | Body temperature |
-| `2708-6` | Oxygen saturation (SpO2) |
+- **Initial Population** → first filter, broad eligibility (age, enrollment, payer)
+- **Denominator** → eligible population (may equal IP or be a subset)
+- **Denominator Exclusion** → remove members who should be excluded (e.g., hospice)
+- **Denominator Exception** → optional exclusions that affect rates differently
+- **Numerator** → members who received the target service/outcome
+- **Numerator Exclusion** → remove from numerator (rare)
+
+### Key Implementation Notes
+- **Continuous enrollment** is a Coverage-based check — not derivable from Encounter data alone
+- **Anchor dates** (e.g., index episode start) anchor lookback/lookforward windows
+- **Administrative vs. hybrid** data sources: administrative uses claims only;
+  hybrid allows supplemental medical record data to fill gaps
+- **Custom variants** (e.g., org-specific intervention-friendly measures) may deviate
+  from NCQA spec — document deviations explicitly when implementing in CQL
 
 ---
 
-## Data Type Patterns
+## Rules Engine Evaluation Context
 
-### Coding (direct) vs CodeableConcept (wrapped)
+When evaluating CQL engine vendors for HEDIS/dQM execution at scale:
 
-**Coding** - Used by `Encounter.class`:
-```json
-{"system": "http://terminology.hl7.org/CodeSystem/v3-ActCode", "code": "AMB"}
-```
+### FHIR Infrastructure Questions to Probe
+- Does the engine require a live FHIR server, or can it execute against FHIR-shaped data in a database?
+- What FHIR version(s) are supported? (R4 is required for NCQA dQMs)
+- Does it support FHIR bulk export ($export) for population-level execution?
+- How does it handle terminology service calls — cached ValueSets or live VSAC calls?
+- What is the FHIR data model requirement — strict resource conformance, or flexible mapping?
 
-**CodeableConcept** - Used by `Observation.code`, `Condition.code`:
-```json
-{"coding": [{"system": "http://loinc.org", "code": "8480-6"}], "text": "Systolic BP"}
-```
+### Performance at Scale
+- At 14M member scale, FHIR-based measure execution requires efficient bulk data handling
+- Watch for engines that make per-member FHIR API calls vs. batch/bulk processing
+- Terminology validation overhead (ValueSet membership checks) compounds at scale —
+  ask vendors how ValueSets are pre-loaded or cached
+- Confirm whether the engine can operate against a FHIR data store replica vs.
+  requiring production system access
 
-### Reference
-```json
-{"reference": "Patient/123", "display": "John Smith"}
-```
-
-### Identifier
-```json
-{"system": "http://hospital.example.org/mrn", "value": "12345"}
-```
-
----
-
-## Common Mistakes
-
-| Mistake | Correct Approach |
-|---------|------------------|
-| Making `subject` or `period` required on Encounter | Both are 0..1 (optional). Only `status` and `class` are required |
-| Using CodeableConcept for `Encounter.class` | `class` uses Coding directly: `{"system": "...", "code": "AMB"}` |
-| Returning 400 for ETag mismatch | Use `412 Precondition Failed` for If-Match failures |
-| Returning 400 for invalid enum values | Use `422 Unprocessable Entity` for validation errors |
-| Forgetting Content-Type header | Always set `Content-Type: application/fhir+json` |
-| Missing Location header on create | Return `Location: /Patient/{id}` with 201 Created |
+### Spec-True vs. Customizable Execution
+- "No deviation from published CQL" = cannot run org-specific measure variants
+- Key flexibility requirement: ability to run both NCQA-spec measures AND
+  custom intervention-friendly variants against the same member population
+- FHIR profiles can constrain but not extend CQL logic — customization lives in
+  the CQL layer, not the FHIR layer
 
 ---
 
-## Resource Structures
+## Examples
 
-For complete JSON examples of all resources, see **[references/resource-examples.md](references/resource-examples.md)**.
-
-Quick reference for error responses:
-
-```json
-{
-  "resourceType": "OperationOutcome",
-  "issue": [{"severity": "error", "code": "not-found", "diagnostics": "Patient/123 not found"}]
-}
+### Example 1: Check if a member has a completed diabetes encounter in the measurement year
+```fhir
+GET /Encounter?patient=Patient/12345
+  &type:in=https://vsac.nlm.nih.gov/valueset/2.16.840.1.113883.3.464.1003.103.12.1001
+  &status=finished
+  &date=ge2024-01-01
+  &date=le2024-12-31
 ```
 
----
-
-## RESTful Endpoints
-
+### Example 2: PDC calculation data pull for medication adherence
+```fhir
+GET /MedicationDispense?patient=Patient/12345
+  &medication.code:in=[Statin ValueSet]
+  &status=completed
+  &whenhandedover=ge2024-01-01
+  &whenhandedover=le2024-12-31
 ```
-POST   /[ResourceType]              # Create (returns 201 + Location header)
-GET    /[ResourceType]/[id]         # Read
-PUT    /[ResourceType]/[id]         # Update
-DELETE /[ResourceType]/[id]         # Delete (returns 204)
-GET    /[ResourceType]?param=value  # Search (returns Bundle)
-GET    /metadata                    # CapabilityStatement
-POST   /                            # Bundle transaction/batch
+Then calculate covered days from `quantity.value` / `daysSupply` to get supply periods,
+merge overlapping periods, divide total covered days by measurement period days.
+
+### Example 3: HCC-relevant condition lookup (MRA context)
+```fhir
+GET /Condition?patient=Patient/12345
+  &code:in=[HCC-mapped ICD-10 ValueSet]
+  &clinical-status=active,recurrence,relapse
+  &verification-status=confirmed
+  &recorded-date=ge2024-01-01
+  &recorded-date=le2024-12-31
 ```
+HCC mapping requires ICD-10-CM → HCC crosswalk applied after retrieval —
+FHIR does not natively encode HCC category.
 
 ---
 
-## Conditional Operations
+## Guidelines
 
-**If-Match** (optimistic locking):
-- Client sends: `If-Match: W/"1"`
-- Mismatch returns `412 Precondition Failed`
-
-**If-None-Exist** (conditional create):
-- Client sends: `If-None-Exist: identifier=http://mrn|12345`
-- Match exists: return existing (200)
-- No match: create new (201)
-
----
-
-## Reference Files
-
-For detailed guidance, see:
-
-- **[Resource Examples](references/resource-examples.md)**: Complete JSON structures for Patient, Observation, Encounter, Condition, MedicationRequest, OperationOutcome, CapabilityStatement
-- **[SMART on FHIR Authorization](references/smart-auth.md)**: OAuth flows, scope syntax (v1/v2), backend services, scope enforcement
-- **[Pagination](references/pagination.md)**: Search result pagination, `_count`/`_offset` parameters, link relations
-- **[Bundle Operations](references/bundles.md)**: Transaction vs batch semantics, atomicity, processing order
-
----
-
-## Implementation Checklist
-
-1. Set `Content-Type: application/fhir+json` on all responses
-2. Return `meta.versionId` and `meta.lastUpdated` on resources
-3. Return `Location` header on create: `/Patient/{id}`
-4. Return `ETag` header: `W/"{versionId}"`
-5. Use OperationOutcome for all error responses
-6. Validate required fields → 422 for missing
-7. Validate enum values → 422 for invalid
-8. Search returns Bundle with `type: "searchset"`
-
----
-
-## Quick Start Script
-
-To scaffold a new FHIR API project with correct Pydantic v2 patterns:
-
-```bash
-python scripts/setup_fhir_project.py my_fhir_api
-```
-
-Creates a FastAPI project with correct models, OperationOutcome helpers, and Patient CRUD endpoints.
+- Always pair `system` + `code` when specifying CodeableConcept — bare codes without
+  system URIs are ambiguous and will fail terminology validation
+- For HEDIS measure logic, prefer `MedicationDispense` over `MedicationRequest`
+  when calculating PDC — dispense reflects actual supply, prescription does not
+- When querying for HEDIS denominator eligibility, Coverage period checks are
+  mandatory — do not assume enrollment from Encounter presence alone
+- NCQA HEDIS value sets must be sourced from VSAC — do not substitute local codes
+  without formal equivalence mapping
+- For CQL measures, confirm the engine uses FHIR R4 ModelInfo — R3 and R4 have
+  different resource structures that will break measure logic if mixed
+- Document any deviation from published NCQA CQL spec as a named variant —
+  this is essential for audit trail and re-measurement consistency
