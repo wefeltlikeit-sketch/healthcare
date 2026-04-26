@@ -408,7 +408,7 @@
           <div class="row" style="margin-top:8px;">
             <a class="btn-link" href="${mapUrl(stop.address)}">Open</a>
             <a class="btn-link success" href="${mapUrl(stop.parking || stop.address)}">Park</a>
-            <button class="secondary" onclick="copyText('${(stop.address || '').replace(/'/g, "&#39;")}')">Copy</button>
+            <button class="secondary js-copy" data-copy="${encodeURIComponent(stop.address || '')}">Copy</button>
           </div>
         </article>
       `;
@@ -427,7 +427,7 @@
           <div class="small"><strong>Notes:</strong> ${market.notes}</div>
           <div class="row" style="margin-top:8px;">
             <a class="btn-link" href="${mapUrl(market.address)}">Open Market</a>
-            <button class="secondary" onclick="copyText('${(market.address || '').replace(/'/g, "&#39;")}')">Copy</button>
+            <button class="secondary js-copy" data-copy="${encodeURIComponent(market.address || '')}">Copy</button>
           </div>
           <label class="small" style="display:flex;align-items:center;gap:8px;margin-top:8px;">
             <input type="checkbox" ${done ? 'checked' : ''} onchange="saveCheck('${id}', this.checked)" />
@@ -515,8 +515,8 @@
           <div class="small"><strong>Phone:</strong> ${TRIP.lodging.phone}</div>
           <div class="small"><strong>Booking ref:</strong> <span class="mono">${TRIP.lodging.bookingRef}</span></div>
           <div class="row" style="margin-top:8px;">
-            <button onclick="openMaps('${TRIP.lodging.address.replace(/'/g, "&#39;")}')">Map Lodging</button>
-            <button class="secondary" onclick="copyText('${TRIP.lodging.address.replace(/'/g, "&#39;")}')">Copy Lodging</button>
+            <a class="btn-link" href="${mapUrl(TRIP.lodging.address)}">Map Lodging</a>
+            <button class="secondary js-copy" data-copy="${encodeURIComponent(TRIP.lodging.address || '')}">Copy Lodging</button>
           </div>
         </section>
         <section class="card">
@@ -544,6 +544,14 @@
         el.style.display = allVisible ? (idx === currentDayIndex ? '' : 'none') : '';
       });
     }
+
+
+    document.addEventListener('click', (e) => {
+      const copyBtn = e.target.closest('.js-copy');
+      if (!copyBtn) return;
+      const value = decodeURIComponent(copyBtn.dataset.copy || '');
+      copyText(value);
+    });
 
     document.addEventListener('keydown', (e) => {
       if (e.key === 'ArrowRight') {
